@@ -10,15 +10,6 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 /// ------------------------------------------------------------
 /// IMAGE PREPROCESSING
 /// ------------------------------------------------------------
-///
-/// The model expects:
-/// [1, 224, 224, 3]
-///
-/// 1    = one image
-/// 224  = image height
-/// 224  = image width
-/// 3    = RGB
-///
 Future<List<List<List<List<double>>>>> processImageInBackground(
     Uint8List bytes) async {
   return Isolate.run(() {
@@ -81,10 +72,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
   String? _prediction;
   double? _confidence;
 
-  /// ----------------------------------------------------------
-  /// INITIALIZE
-  /// ----------------------------------------------------------
-
   @override
   void initState() {
     super.initState();
@@ -102,7 +89,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final Interpreter interpreter =
           await Interpreter.fromAsset(
-        'assets/agroshield_model.tflite',
+        'assets/offline_crop_model.tflite',
       );
 
       final String labelsData =
@@ -169,8 +156,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final XFile? pickedFile = await picker.pickImage(
         source: source,
-
-        // Reduce image size before processing.
         imageQuality: 80,
         maxWidth: 1280,
         maxHeight: 1280,
@@ -187,15 +172,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       setState(() {
         _selectedImage = imageFile;
-
-        // Clear old result.
         _prediction = null;
         _confidence = null;
       });
 
-      debugPrint(
-        'IMAGE SELECTED: ${pickedFile.path}',
-      );
+      debugPrint('IMAGE SELECTED: ${pickedFile.path}');
     } catch (e, stackTrace) {
       debugPrint('IMAGE SELECTION ERROR: $e');
       debugPrint('$stackTrace');
@@ -204,9 +185,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Could not select image: $e',
-          ),
+          content: Text('Could not select image: $e'),
         ),
       );
     }
@@ -220,9 +199,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (_selectedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Please select or capture an image first.',
-          ),
+          content: Text('Please select or capture an image first.'),
         ),
       );
       return;
@@ -231,20 +208,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (!_modelLoaded || _interpreter == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'AI model is still loading. Please wait.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    if (_labels.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Expected 6 labels, but found ${_labels.length}.',
-          ),
+          content: Text('AI model is still loading. Please wait.'),
         ),
       );
       return;
@@ -264,153 +228,68 @@ class _ScannerScreenState extends State<ScannerScreen> {
       debugPrint('==============================');
       debugPrint('STARTING PLANT ANALYSIS');
 
-      /// --------------------------------------------------------
-      /// READ IMAGE
-      /// --------------------------------------------------------
-
       final Uint8List imageBytes =
           await _selectedImage!.readAsBytes();
 
-      debugPrint(
-        'IMAGE READ: ${imageBytes.length} bytes',
-      );
-
-      /// --------------------------------------------------------
-      /// PREPROCESS IMAGE
-      /// --------------------------------------------------------
-
-      debugPrint(
-        'STARTING IMAGE PREPROCESSING',
-      );
+      debugPrint('IMAGE READ: ${imageBytes.length} bytes');
 
       final List<List<List<List<double>>>> input =
           await processImageInBackground(imageBytes);
 
-      debugPrint(
-        'IMAGE PROCESSING COMPLETE',
-      );
+      debugPrint('IMAGE PROCESSING COMPLETE');
 
       /// --------------------------------------------------------
-      /// CHECK MODEL
+      /// CHECK MODEL OUTPUT SHAPE DYNAMICALLY
       /// --------------------------------------------------------
+      final outputTensor = _interpreter!.getOutputTensor(0);
+      final outputShape = outputTensor.shape; // Handles [1, 1] or [1, 6]
 
-      final inputTensor =
-          _interpreter!.getInputTensor(0);
+      debugPrint('INPUT SHAPE: ${_interpreter!.getInputTensor(0).shape}');
+      debugPrint('OUTPUT SHAPE: $outputShape');
 
-      final outputTensor =
-          _interpreter!.getOutputTensor(0);
-
-      debugPrint(
-        'INPUT SHAPE: ${inputTensor.shape}',
+      // Dynamically generate the buffer matching the model output shape
+      final List<List<double>> output = List.generate(
+        outputShape[0],
+        (_) => List<double>.filled(outputShape[1], 0.0),
       );
 
-      debugPrint(
-        'INPUT TYPE: ${inputTensor.type}',
-      );
+      debugPrint('STARTING MODEL INFERENCE');
 
-      debugPrint(
-        'OUTPUT SHAPE: ${outputTensor.shape}',
-      );
+      _interpreter!.run(input, output);
 
-      debugPrint(
-        'OUTPUT TYPE: ${outputTensor.type}',
-      );
+      debugPrint('MODEL OUTPUT: ${output[0]}');
 
       /// --------------------------------------------------------
-      /// MODEL OUTPUT
+      /// PARSE RESULTS BASED ON SHAPE
       /// --------------------------------------------------------
-      ///
-      /// Model output:
-      /// [1, 6]
-      ///
-      /// Six classes:
-      ///
-      /// 0 Potato Early Blight
-      /// 1 Potato Late Blight
-      /// 2 Potato Healthy
-      /// 3 Tomato Early Blight
-      /// 4 Tomato Late Blight
-      /// 5 Tomato Healthy
-      ///
-      final List<List<double>> output =
-          List.generate(
-        1,
-        (_) => List<double>.filled(
-          _labels.length,
-          0.0,
-        ),
-      );
-
-      debugPrint(
-        'STARTING MODEL INFERENCE',
-      );
-
-      /// Run model exactly ONCE.
-      _interpreter!.run(
-        input,
-        output,
-      );
-
-      debugPrint(
-        'MODEL OUTPUT: ${output[0]}',
-      );
-
-      /// --------------------------------------------------------
-      /// FIND HIGHEST SCORE
-      /// --------------------------------------------------------
-
-      final List<double> scores = output[0];
-
       int bestIndex = 0;
-      double bestScore = scores[0];
+      double bestScore = 1.0;
 
-      for (int i = 1; i < scores.length; i++) {
-        if (scores[i] > bestScore) {
-          bestScore = scores[i];
-          bestIndex = i;
+      if (outputShape[1] == 1) {
+        // Model outputs a single class index directly
+        bestIndex = output[0][0].round().clamp(0, _labels.length - 1);
+        bestScore = 1.0; 
+      } else {
+        // Model outputs probability distribution array
+        final List<double> scores = output[0];
+        bestScore = scores[0];
+        for (int i = 1; i < scores.length; i++) {
+          if (scores[i] > bestScore) {
+            bestScore = scores[i];
+            bestIndex = i;
+          }
         }
       }
 
-      /// Prevent invalid values.
-      if (bestScore.isNaN ||
-          bestScore.isInfinite) {
-        throw Exception(
-          'Model returned an invalid confidence value.',
-        );
+      if (bestScore.isNaN || bestScore.isInfinite) {
+        throw Exception('Model returned an invalid confidence value.');
       }
 
-      /// Some models return values between 0 and 1.
-      /// Keep the displayed value safe for the progress bar.
-      double displayConfidence = bestScore;
+      final String prediction = _labels[bestIndex];
 
-      if (displayConfidence < 0) {
-        displayConfidence = 0;
-      }
-
-      if (displayConfidence > 1) {
-        displayConfidence = 1;
-      }
-
-      final String prediction =
-          _labels[bestIndex];
-
-      debugPrint(
-        'BEST INDEX: $bestIndex',
-      );
-
-      debugPrint(
-        'PREDICTION: $prediction',
-      );
-
-      debugPrint(
-        'MODEL SCORE: $bestScore',
-      );
-
-      debugPrint(
-        'DISPLAY CONFIDENCE: '
-        '${(displayConfidence * 100).toStringAsFixed(2)}%',
-      );
-
+      debugPrint('BEST INDEX: $bestIndex');
+      debugPrint('PREDICTION: $prediction');
+      debugPrint('MODEL SCORE: $bestScore');
       debugPrint('ANALYSIS COMPLETE');
       debugPrint('==============================');
 
@@ -419,7 +298,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       setState(() {
         _analyzing = false;
         _prediction = prediction;
-        _confidence = displayConfidence;
+        _confidence = bestScore;
       });
     } catch (e, stackTrace) {
       debugPrint('==============================');
@@ -435,17 +314,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Analysis failed: $e',
-          ),
+          content: Text('Analysis failed: $e'),
         ),
       );
     }
   }
-
-  /// ----------------------------------------------------------
-  /// RESET
-  /// ----------------------------------------------------------
 
   void _resetScan() {
     if (_analyzing) return;
@@ -457,24 +330,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
     });
   }
 
-  /// ----------------------------------------------------------
-  /// RESULT TITLE
-  /// ----------------------------------------------------------
-
-  String _getResultTitle(
-    String prediction,
-  ) {
-    final String lower =
-        prediction.toLowerCase();
+  String _getResultTitle(String prediction) {
+    final String lower = prediction.toLowerCase();
 
     if (lower.contains('healthy')) {
       return 'Healthy Plant';
     }
-
     if (lower.contains('early')) {
       return 'Early Blight';
     }
-
     if (lower.contains('late')) {
       return 'Late Blight';
     }
@@ -482,20 +346,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
     return prediction;
   }
 
-  /// ----------------------------------------------------------
-  /// PLANT NAME
-  /// ----------------------------------------------------------
-
-  String _getPlantName(
-    String prediction,
-  ) {
-    final String lower =
-        prediction.toLowerCase();
+  String _getPlantName(String prediction) {
+    final String lower = prediction.toLowerCase();
 
     if (lower.contains('potato')) {
       return 'Potato';
     }
-
     if (lower.contains('tomato')) {
       return 'Tomato';
     }
@@ -503,56 +359,30 @@ class _ScannerScreenState extends State<ScannerScreen> {
     return 'Plant';
   }
 
-  /// ----------------------------------------------------------
-  /// RECOMMENDATION
-  /// ----------------------------------------------------------
-
-  String _getRecommendation(
-    String prediction,
-  ) {
-    final String lower =
-        prediction.toLowerCase();
+  String _getRecommendation(String prediction) {
+    final String lower = prediction.toLowerCase();
 
     if (lower.contains('healthy')) {
-      return 'The $_getPlantName(prediction) leaf appears healthy. '
-          'Continue regular monitoring, balanced watering, '
-          'proper nutrition, and good crop care.';
+      return 'The plant leaf appears healthy. Continue regular monitoring, balanced watering, proper nutrition, and good crop care.';
     }
-
     if (lower.contains('early')) {
-      return 'Early blight was detected. Remove badly affected leaves, '
-          'avoid prolonged leaf wetness, provide good airflow, '
-          'and follow locally recommended disease-management practices.';
+      return 'Early blight was detected. Remove badly affected leaves, avoid prolonged leaf wetness, provide good airflow, and follow local disease-management guidelines.';
     }
-
     if (lower.contains('late')) {
-      return 'Late blight was detected. Remove severely affected plant '
-          'material, reduce prolonged leaf wetness, improve airflow, '
-          'and follow locally recommended disease-management practices.';
+      return 'Late blight was detected. Remove severely affected plant material, reduce prolonged leaf wetness, improve airflow, and follow local disease-management guidelines.';
     }
 
-    return 'Monitor the plant closely and follow appropriate '
-        'crop-care and disease-management practices.';
+    return 'Monitor the plant closely and follow appropriate crop-care practices.';
   }
 
-  /// ----------------------------------------------------------
-  /// RESULT CARD
-  /// ----------------------------------------------------------
-
   Widget _buildResultCard() {
-    if (_prediction == null ||
-        _confidence == null) {
+    if (_prediction == null || _confidence == null) {
       return const SizedBox.shrink();
     }
 
-    final String prediction =
-        _prediction!;
-
-    final String resultTitle =
-        _getResultTitle(prediction);
-
-    final String plantName =
-        _getPlantName(prediction);
+    final String prediction = _prediction!;
+    final String resultTitle = _getResultTitle(prediction);
+    final String plantName = _getPlantName(prediction);
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -565,8 +395,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         ),
       ),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
             '🔍 Analysis Result',
@@ -575,9 +404,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 18),
-
           Text(
             resultTitle,
             style: const TextStyle(
@@ -585,9 +412,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 8),
-
           Text(
             'Plant: $plantName',
             style: const TextStyle(
@@ -595,9 +420,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               color: Colors.black54,
             ),
           ),
-
           const SizedBox(height: 4),
-
           Text(
             'Prediction: $prediction',
             style: const TextStyle(
@@ -605,9 +428,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               color: Colors.black54,
             ),
           ),
-
           const SizedBox(height: 18),
-
           const Text(
             'AI Confidence',
             style: TextStyle(
@@ -615,21 +436,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 8),
-
           LinearProgressIndicator(
             value: _confidence!,
             minHeight: 9,
-            borderRadius:
-                BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(10),
             color: Colors.green,
-            backgroundColor:
-                Colors.green.shade100,
+            backgroundColor: Colors.green.shade100,
           ),
-
           const SizedBox(height: 8),
-
           Text(
             '${(_confidence! * 100).toStringAsFixed(2)}%',
             style: const TextStyle(
@@ -637,9 +452,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 24),
-
           const Text(
             '💊 Recommendation',
             style: TextStyle(
@@ -647,13 +460,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 10),
-
           Text(
-            _getRecommendation(
-              prediction,
-            ),
+            _getRecommendation(prediction),
             style: const TextStyle(
               fontSize: 15,
               height: 1.5,
@@ -664,57 +473,28 @@ class _ScannerScreenState extends State<ScannerScreen> {
     );
   }
 
-  /// ----------------------------------------------------------
-  /// BUILD UI
-  /// ----------------------------------------------------------
-
   @override
-  Widget build(
-    BuildContext context,
-  ) {
-    final bool hasImage =
-        _selectedImage != null;
-
-    final bool hasResult =
-        _prediction != null &&
-        _confidence != null;
+  Widget build(BuildContext context) {
+    final bool hasImage = _selectedImage != null;
+    final bool hasResult = _prediction != null && _confidence != null;
 
     return Scaffold(
-      backgroundColor:
-          const Color(0xFFF5F8F5),
-
-      /// --------------------------------------------------------
-      /// APP BAR
-      /// --------------------------------------------------------
-
+      backgroundColor: const Color(0xFFF5F8F5),
       appBar: AppBar(
         title: const Text(
           'AgroShield AI',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
         centerTitle: true,
       ),
-
-      /// --------------------------------------------------------
-      /// BODY
-      /// --------------------------------------------------------
-
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
-
           child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              /// ------------------------------------------------
-              /// HEADER
-              /// ------------------------------------------------
-
               const Text(
                 'Smart Crop Health Scanner',
                 textAlign: TextAlign.center,
@@ -723,31 +503,21 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-
               const SizedBox(height: 8),
-
               const Text(
-                'Capture or upload a plant leaf '
-                'to check its condition.',
+                'Capture or upload a plant leaf to check its condition.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.black54,
                   fontSize: 15,
                 ),
               ),
-
               const SizedBox(height: 25),
-
-              /// ------------------------------------------------
-              /// IMAGE PREVIEW
-              /// ------------------------------------------------
-
               Container(
                 height: 260,
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius:
-                      BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: Colors.green.shade200,
                     width: 1.5,
@@ -755,8 +525,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 ),
                 child: hasImage
                     ? ClipRRect(
-                        borderRadius:
-                            BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(20),
                         child: Image.file(
                           _selectedImage!,
                           fit: BoxFit.contain,
@@ -764,8 +533,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         ),
                       )
                     : const Column(
-                        mainAxisAlignment:
-                            MainAxisAlignment.center,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
                             Icons.eco,
@@ -783,98 +551,51 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         ],
                       ),
               ),
-
               const SizedBox(height: 20),
-
-              /// ------------------------------------------------
-              /// CAMERA + UPLOAD
-              /// ------------------------------------------------
-
               if (!hasImage) ...[
                 ElevatedButton.icon(
                   onPressed: _modelLoaded
-                      ? () => _selectImage(
-                            ImageSource.camera,
-                          )
+                      ? () => _selectImage(ImageSource.camera)
                       : null,
-                  icon: const Icon(
-                    Icons.camera_alt,
-                  ),
+                  icon: const Icon(Icons.camera_alt),
                   label: const Text(
                     'Click Image',
-                    style: TextStyle(
-                      fontSize: 16,
-                    ),
+                    style: TextStyle(fontSize: 16),
                   ),
-                  style:
-                      ElevatedButton.styleFrom(
-                    backgroundColor:
-                        Colors.green,
-                    foregroundColor:
-                        Colors.white,
-                    padding:
-                        const EdgeInsets.symmetric(
-                      vertical: 15,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(14),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 12),
-
                 OutlinedButton.icon(
                   onPressed: _modelLoaded
-                      ? () => _selectImage(
-                            ImageSource.gallery,
-                          )
+                      ? () => _selectImage(ImageSource.gallery)
                       : null,
-                  icon: const Icon(
-                    Icons.photo_library,
-                  ),
+                  icon: const Icon(Icons.photo_library),
                   label: const Text(
                     'Upload Image',
-                    style: TextStyle(
-                      fontSize: 16,
-                    ),
+                    style: TextStyle(fontSize: 16),
                   ),
-                  style:
-                      OutlinedButton.styleFrom(
-                    foregroundColor:
-                        Colors.green,
-                    padding:
-                        const EdgeInsets.symmetric(
-                      vertical: 15,
-                    ),
-                    side: const BorderSide(
-                      color: Colors.green,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(14),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.green,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    side: const BorderSide(color: Colors.green),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                 ),
               ],
-
-              /// ------------------------------------------------
-              /// DETECT BUTTON
-              /// ------------------------------------------------
-
-              if (hasImage &&
-                  !hasResult &&
-                  !_analyzing) ...[
+              if (hasImage && !hasResult && !_analyzing) ...[
                 const SizedBox(height: 5),
-
                 ElevatedButton.icon(
                   onPressed: _detectPlant,
-                  icon: const Icon(
-                    Icons.search,
-                  ),
+                  icon: const Icon(Icons.search),
                   label: const Text(
                     'Detect',
                     style: TextStyle(
@@ -882,64 +603,41 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  style:
-                      ElevatedButton.styleFrom(
-                    backgroundColor:
-                        Colors.green,
-                    foregroundColor:
-                        Colors.white,
-                    padding:
-                        const EdgeInsets.symmetric(
-                      vertical: 16,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(14),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                 ),
               ],
-
-              /// ------------------------------------------------
-              /// ANALYSING
-              /// ------------------------------------------------
-
               if (_analyzing) ...[
                 const SizedBox(height: 25),
-
                 Container(
-                  padding:
-                      const EdgeInsets.all(25),
+                  padding: const EdgeInsets.all(25),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius:
-                        BorderRadius.circular(18),
+                    borderRadius: BorderRadius.circular(18),
                   ),
                   child: const Column(
                     children: [
                       CircularProgressIndicator(
                         color: Colors.green,
                       ),
-
                       SizedBox(height: 18),
-
                       Text(
                         'Analysing leaf...',
                         style: TextStyle(
                           fontSize: 19,
-                          fontWeight:
-                              FontWeight.bold,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-
                       SizedBox(height: 8),
-
                       Text(
-                        'Processing image and '
-                        'running AI model.',
-                        textAlign:
-                            TextAlign.center,
+                        'Processing image and running AI model.',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Colors.black54,
                         ),
@@ -948,76 +646,38 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   ),
                 ),
               ],
-
-              /// ------------------------------------------------
-              /// RESULT
-              /// ------------------------------------------------
-
               if (hasResult) ...[
                 const SizedBox(height: 25),
-
                 _buildResultCard(),
-
                 const SizedBox(height: 20),
-
                 OutlinedButton.icon(
                   onPressed: _resetScan,
-                  icon: const Icon(
-                    Icons.refresh,
-                  ),
-                  label: const Text(
-                    'Scan Another Image',
-                  ),
-                  style:
-                      OutlinedButton.styleFrom(
-                    foregroundColor:
-                        Colors.green,
-                    padding:
-                        const EdgeInsets.symmetric(
-                      vertical: 14,
-                    ),
-                    side: const BorderSide(
-                      color: Colors.green,
-                    ),
-                    shape:
-                        RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(14),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Scan Another Image'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.green,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: const BorderSide(color: Colors.green),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                 ),
               ],
-
               const SizedBox(height: 25),
-
-              /// ------------------------------------------------
-              /// MODEL STATUS
-              /// ------------------------------------------------
-
               Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    _modelLoaded
-                        ? Icons.check_circle
-                        : Icons.hourglass_top,
+                    _modelLoaded ? Icons.check_circle : Icons.hourglass_top,
                     size: 16,
-                    color: _modelLoaded
-                        ? Colors.green
-                        : Colors.orange,
+                    color: _modelLoaded ? Colors.green : Colors.orange,
                   ),
-
                   const SizedBox(width: 6),
-
                   Text(
-                    _modelLoaded
-                        ? 'AI model ready'
-                        : 'Loading AI model...',
+                    _modelLoaded ? 'AI model ready' : 'Loading AI model...',
                     style: TextStyle(
-                      color: _modelLoaded
-                          ? Colors.green
-                          : Colors.orange,
+                      color: _modelLoaded ? Colors.green : Colors.orange,
                       fontSize: 13,
                     ),
                   ),
@@ -1029,10 +689,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
       ),
     );
   }
-
-  /// ----------------------------------------------------------
-  /// DISPOSE
-  /// ----------------------------------------------------------
 
   @override
   void dispose() {
