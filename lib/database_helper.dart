@@ -104,6 +104,14 @@ class DatabaseHelper {
       'prevention': 'Continue standard watering and nutrient management schedules.',
       'iot_action': 'Standard soil moisture tracking active.'
     });
+
+    await db.execute('''
+  CREATE TABLE iot_history(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_text TEXT,
+    timestamp TEXT
+  )
+''');
   }
 
   // Automatically runs when database version is incremented on an existing device
@@ -169,5 +177,20 @@ class DatabaseHelper {
     where: 'id = ?',
     whereArgs: [id],
   );
+}
+
+// Insert an IoT alert into SQLite when swiped away
+Future<int> insertIoTAlert(String alertText) async {
+  final db = await database;
+  return await db.insert('iot_history', {
+    'alert_text': alertText,
+    'timestamp': DateTime.now().toIso8601String(),
+  });
+}
+
+// Fetch all saved IoT alerts for the history timeline screen
+Future<List<Map<String, dynamic>>> getIoTAlerts() async {
+  final db = await database;
+  return await db.query('iot_history', orderBy: 'id DESC');
 }
 }
