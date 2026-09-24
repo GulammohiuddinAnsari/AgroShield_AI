@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'database_helper.dart';
-import 'result_screen.dart';
 import 'localization_helper.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -12,8 +11,7 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  List<Map<String, dynamic>> _historyList = [];
-  bool _isLoading = true;
+  late Future<List<Map<String, dynamic>>> _historyFuture;
 
   @override
   void initState() {
@@ -21,35 +19,34 @@ class _HistoryScreenState extends State<HistoryScreen> {
     _loadHistory();
   }
 
-  Future<void> _loadHistory() async {
-    final history = await DatabaseHelper.instance.getScanHistory();
+  void _loadHistory() {
     setState(() {
-      _historyList = history;
-      _isLoading = false;
+      _historyFuture = DatabaseHelper.instance.getScanHistory();
     });
   }
 
-  Future<void> _deleteItem(int id) async {
-    final localization = LocalizationHelper.instance;
-    final bool? confirm = await showDialog<bool>(
+  Future<void> _deleteItem(int id, LocalizationHelper localization) async {
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(localization.translate('delete_title')),
-        content: Text(localization.translate('delete_content')),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(localization.translate('delete_title'), style: const TextStyle(fontWeight: FontWeight.w800, color: Color(0xFF1B4D3E))),
+        content: Text(localization.translate('delete_content'), style: const TextStyle(height: 1.4)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: Text(localization.translate('cancel'), style: const TextStyle(color: Colors.grey)),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(localization.translate('delete'), style: const TextStyle(color: Colors.red)),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            child: Text(localization.translate('delete')),
           ),
         ],
       ),
     );
 
-    if (confirm == true) {
+    if (confirmed == true) {
       await DatabaseHelper.instance.deleteScanHistory(id);
       _loadHistory();
       if (!mounted) return;
@@ -57,7 +54,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         SnackBar(
           content: Text(localization.translate('delete_success')),
           behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
+          backgroundColor: const Color(0xFF1B4D3E),
         ),
       );
     }
@@ -68,108 +65,193 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final localization = LocalizationHelper.instance;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8F5),
+      backgroundColor: const Color(0xFFF2F6F3),
       appBar: AppBar(
-        title: Text(localization.translate('history_title')),
-        backgroundColor: Colors.green.shade700,
+        title: Text(
+          localization.translate('history_title'),
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 0.5),
+        ),
+        backgroundColor: const Color(0xFF1B4D3E),
         foregroundColor: Colors.white,
+        centerTitle: true,
+        elevation: 0,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.green))
-          : _historyList.isEmpty
-              ? Center(
-                  child: Text(
-                    localization.translate('no_history'),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.grey, fontSize: 16),
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _historyList.length,
-                  itemBuilder: (context, index) {
-                    final item = _historyList[index];
-                    final int id = item['id'];
-                    final imagePath = item['image_path'] ?? '';
-                    final diseaseName = item['disease_name'] ?? 'Unknown';
-                    final confidence = item['confidence'] ?? 0.0;
-                    final timestampStr = item['timestamp'] ?? '';
-                    
-                    String formattedDate = timestampStr;
-                    try {
-                      final dt = DateTime.parse(timestampStr);
-                      formattedDate = '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-                    } catch (_) {}
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _historyFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(
+                color: Color(0xFF1B4D3E),
+                strokeWidth: 3,
+              ),
+            );
+          }
 
-                    final imageFile = File(imagePath);
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Text(
+                  'Error loading history: ${snapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+                ),
+              ),
+            );
+          }
 
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      elevation: 2,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ResultScreen(
-                                image: imageFile,
-                                diseaseName: diseaseName,
-                                confidence: confidence,
-                              ),
-                            ),
-                          );
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Row(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: imageFile.existsSync()
-                                    ? Image.file(imageFile, width: 70, height: 70, fit: BoxFit.cover)
-                                    : Container(
-                                        width: 70,
-                                        height: 70,
-                                        color: Colors.grey.shade200,
-                                        child: const Icon(Icons.broken_image, color: Colors.grey),
-                                      ),
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      diseaseName.replaceAll('___', ' - '),
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${localization.translate('confidence')}: ${(confidence * 100).toStringAsFixed(1)}%',
-                                      style: TextStyle(color: Colors.green.shade800, fontSize: 13, fontWeight: FontWeight.w600),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      formattedDate,
-                                      style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                    ),
-                                  ],
+          final items = snapshot.data ?? [];
+
+          if (items.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.history_edu_rounded, size: 56, color: Colors.green.shade700),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      localization.translate('no_history'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        height: 1.5,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              final id = item['id'] as int;
+              final imagePath = item['image_path'] as String;
+              final diseaseName = (item['disease_name'] as String).replaceAll('___', ' - ');
+              final confidence = (item['confidence'] as double) * 100;
+              final timestamp = item['timestamp'] as String? ?? '';
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    children: [
+                      // Thumbnail Image
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: SizedBox(
+                          width: 68,
+                          height: 68,
+                          child: File(imagePath).existsSync()
+                              ? Image.file(
+                                  File(imagePath),
+                                  fit: BoxFit.cover,
+                                )
+                              : Container(
+                                  color: Colors.grey.shade200,
+                                  child: const Icon(Icons.broken_image_rounded, color: Colors.grey),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
-                                onPressed: () => _deleteItem(id),
-                                tooltip: 'Delete item',
-                              ),
-                            ],
-                          ),
                         ),
                       ),
-                    );
-                  },
+                      const SizedBox(width: 14),
+                      // Details
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.shade50,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: Colors.green.shade200),
+                                  ),
+                                  child: Text(
+                                    '${confidence.toStringAsFixed(1)}% match',
+                                    style: TextStyle(
+                                      color: Colors.green.shade800,
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              diseaseName,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF1B4D3E),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _formatTimestamp(timestamp),
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Colors.grey.shade500,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Delete Action Button
+                      IconButton(
+                        icon: Icon(Icons.delete_outline_rounded, color: Colors.red.shade400, size: 22),
+                        onPressed: () => _deleteItem(id, localization),
+                        tooltip: localization.translate('delete'),
+                      ),
+                    ],
+                  ),
                 ),
+              );
+            },
+          );
+        },
+      ),
     );
+  }
+
+  String _formatTimestamp(String rawTimestamp) {
+    try {
+      final dt = DateTime.parse(rawTimestamp).toLocal();
+      return '${dt.day}/${dt.month}/${dt.year} • ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return rawTimestamp;
+    }
   }
 }
