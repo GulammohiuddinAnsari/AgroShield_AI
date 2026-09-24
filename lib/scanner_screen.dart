@@ -11,9 +11,6 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 import 'result_screen.dart';
 import 'history_screen.dart';
 import 'localization_helper.dart';
-import 'iot_service.dart';
-import 'iot_helper.dart';
-import 'iot_history_screen.dart'; 
 
 /// Background Isolate: Green Pixel Validation & TFLite Preprocessing
 Future<Map<String, dynamic>> processAndValidateImage(Uint8List bytes) async {
@@ -85,23 +82,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
   bool _modelLoaded = false;
   bool _analyzing = false;
   File? _selectedImage;
-  Timer? _iotTimer;
 
   @override
   void initState() {
     super.initState();
     _loadModel();
-    _fetchIoTData();
-
-    // 10-Minute Periodic IoT Sensor Background Sync Timer
-    _iotTimer = Timer.periodic(const Duration(minutes: 10), (timer) {
-      _fetchIoTData();
-    });
-  }
-
-  Future<void> _fetchIoTData() async {
-    await IoTService.instance.fetchSensorDataFromWeb();
-    if (mounted) setState(() {});
   }
 
   Future<void> _loadModel() async {
@@ -208,44 +193,25 @@ class _ScannerScreenState extends State<ScannerScreen> {
     setState(() => _selectedImage = null);
   }
 
-  void _refreshSensors() {
-    _fetchIoTData();
-  }
-
   @override
   Widget build(BuildContext context) {
     final bool hasImage = _selectedImage != null;
     final localization = LocalizationHelper.instance;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FBF8),
+      backgroundColor: const Color(0xFFF2F6F3),
       appBar: AppBar(
-        title: Text(localization.translate('app_title'), style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-        backgroundColor: Colors.green.shade700,
+        title: Text(localization.translate('scanner_title'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
+        backgroundColor: const Color(0xFF1B4D3E),
         foregroundColor: Colors.white,
         centerTitle: true,
         elevation: 0,
         actions: [
-          TextButton.icon(
-            onPressed: () => setState(() => localization.toggleLanguage()),
-            icon: const Icon(Icons.language_rounded, color: Colors.white, size: 18),
-            label: Text(localization.currentLang.toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
           IconButton(
             icon: const Icon(Icons.history_rounded),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
             tooltip: 'Scan History',
           ),
-          IconButton(
-  icon: const Icon(Icons.sensors_rounded),
-  onPressed: () {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const IoTHistoryScreen()),
-    );
-  },
-  tooltip: 'View IoT Alerts History',
-),
         ],
       ),
       body: SafeArea(
@@ -254,17 +220,48 @@ class _ScannerScreenState extends State<ScannerScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              buildIoTAlertBanner(context, _refreshSensors),
-              Text(localization.translate('scanner_title'), textAlign: TextAlign.center, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Color(0xFF1B4D3E))),
-              const SizedBox(height: 6),
-              Text(localization.translate('scanner_subtitle'), textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
-              const SizedBox(height: 24),
+              // Developer Note / Context Banner
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 3))],
+                  border: Border.all(color: Colors.green.shade100),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: Colors.green.shade50, shape: BoxShape.circle),
+                      child: Icon(Icons.security_rounded, color: Colors.green.shade800, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          Text('Offline Neural Engine', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: Color(0xFF1B4D3E))),
+                          SizedBox(height: 3),
+                          Text(
+                            'Powered by an edge TFLite model. Diagnoses leaf anomalies locally on your device without uploading data to external cloud servers.',
+                            style: TextStyle(color: Colors.black54, fontSize: 11.5, height: 1.35),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              
+              // Image Preview Container
               Container(
                 height: 280,
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(24),
-                  boxShadow: [BoxShadow(color: Colors.green.shade900.withOpacity(0.06), blurRadius: 18, offset: const Offset(0, 6))],
+                  boxShadow: [BoxShadow(color: const Color(0xFF1B4D3E).withOpacity(0.06), blurRadius: 16, offset: const Offset(0, 6))],
                   border: Border.all(color: Colors.green.shade200, width: 2),
                 ),
                 child: hasImage
@@ -273,55 +270,85 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(20),
+                            padding: const EdgeInsets.all(22),
                             decoration: BoxDecoration(color: Colors.green.shade50, shape: BoxShape.circle),
-                            child: Icon(Icons.eco_rounded, size: 56, color: Colors.green.shade700),
+                            child: Icon(Icons.add_a_photo_rounded, size: 48, color: Colors.green.shade700),
                           ),
                           const SizedBox(height: 16),
-                          Text(localization.translate('no_image'), style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
-                          const SizedBox(height: 4),
-                          Text(localization.translate('image_hint'), style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
+                          Text(localization.translate('no_image'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF1B4D3E))),
+                          const SizedBox(height: 6),
+                          Text(localization.translate('image_hint'), style: TextStyle(fontSize: 12.5, color: Colors.grey.shade500)),
                         ],
                       ),
               ),
               const SizedBox(height: 24),
+
+              // Action Buttons
               if (!hasImage) ...[
                 ElevatedButton.icon(
                   onPressed: _modelLoaded ? () => _selectImage(ImageSource.camera) : null,
                   icon: const Icon(Icons.camera_alt_rounded),
                   label: Text(localization.translate('capture_photo'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1B4D3E),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: 2,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _modelLoaded ? () => _selectImage(ImageSource.gallery) : null,
                   icon: const Icon(Icons.photo_library_rounded),
                   label: Text(localization.translate('upload_gallery'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.green.shade700, padding: const EdgeInsets.symmetric(vertical: 16), side: BorderSide(color: Colors.green.shade700, width: 1.5), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF1B4D3E),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    side: const BorderSide(color: Color(0xFF1B4D3E), width: 1.5),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
                 ),
               ],
+
               if (hasImage && !_analyzing) ...[
                 ElevatedButton.icon(
                   onPressed: _detectPlant,
                   icon: const Icon(Icons.bolt_rounded),
                   label: Text(localization.translate('run_diagnosis'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade800, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1B4D3E),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: 2,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _resetScan,
                   icon: const Icon(Icons.refresh_rounded),
                   label: Text(localization.translate('clear_image'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red.shade700, padding: const EdgeInsets.symmetric(vertical: 14), side: BorderSide(color: Colors.red.shade300, width: 1.5), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red.shade700,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: BorderSide(color: Colors.red.shade300, width: 1.5),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
                 ),
               ],
+
               if (_analyzing) ...[
                 Container(
                   padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10)]),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10)],
+                  ),
                   child: Column(
                     children: [
-                      const CircularProgressIndicator(color: Colors.green, strokeWidth: 3),
+                      const CircularProgressIndicator(color: Color(0xFF1B4D3E), strokeWidth: 3),
                       const SizedBox(height: 16),
                       Text(localization.translate('analyzing'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.black87)),
                       const SizedBox(height: 6),
@@ -330,10 +357,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   ),
                 ),
               ],
-              const SizedBox(height: 30),
+              const SizedBox(height: 28),
+
+              // Status Chip
               Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
                     color: _modelLoaded ? Colors.green.shade50 : Colors.orange.shade50,
                     borderRadius: BorderRadius.circular(30),
@@ -342,9 +371,20 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(_modelLoaded ? Icons.check_circle_rounded : Icons.hourglass_top_rounded, size: 16, color: _modelLoaded ? Colors.green.shade700 : Colors.orange.shade700),
+                      Icon(
+                        _modelLoaded ? Icons.check_circle_rounded : Icons.hourglass_top_rounded,
+                        size: 16,
+                        color: _modelLoaded ? Colors.green.shade700 : Colors.orange.shade700,
+                      ),
                       const SizedBox(width: 8),
-                      Text(_modelLoaded ? localization.translate('model_ready') : localization.translate('loading_model'), style: TextStyle(color: _modelLoaded ? Colors.green.shade800 : Colors.orange.shade800, fontSize: 12, fontWeight: FontWeight.w600)),
+                      Text(
+                        _modelLoaded ? localization.translate('model_ready') : localization.translate('loading_model'),
+                        style: TextStyle(
+                          color: _modelLoaded ? Colors.green.shade800 : Colors.orange.shade800,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -358,7 +398,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   @override
   void dispose() {
-    _iotTimer?.cancel();
     _interpreter?.close();
     super.dispose();
   }
